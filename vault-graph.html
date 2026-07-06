@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Obsidian Vault Graphs</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+  :root {
+    --bg: #0f1117; --panel: #1a1d27; --border: #2a2d3a;
+    --text: #e8e9ed; --muted: #6b7280; --accent: #4f8ef7;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Inter', system-ui, sans-serif; background: var(--bg); color: var(--text); height: 100dvh; overflow: hidden; display: flex; flex-direction: column; }
+  header { display: flex; align-items: center; gap: 16px; padding: 12px 24px; background: var(--panel); border-bottom: 1px solid var(--border); flex-shrink: 0; }
+  header h1 { font-size: 15px; font-weight: 600; }
+  header h1 span { color: var(--accent); }
+  .vault-tabs { display: flex; gap: 4px; margin-left: auto; }
+  .vault-tab { padding: 6px 16px; border-radius: 8px; font-size: 12px; font-weight: 500; cursor: pointer; border: 1px solid var(--border); background: transparent; color: var(--muted); transition: all 0.2s; }
+  .vault-tab.active { background: var(--accent); color: white; border-color: var(--accent); }
+  .vault-tab:hover:not(.active) { border-color: var(--accent); color: var(--text); }
+  .main { display: flex; flex: 1; overflow: hidden; }
+  .graph-panel { flex: 1; position: relative; overflow: hidden; }
+  svg { width: 100%; height: 100%; }
+  .sidebar { width: 260px; background: var(--panel); border-left: 1px solid var(--border); overflow-y: auto; flex-shrink: 0; padding: 16px; }
+  .sidebar h3 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin-bottom: 12px; }
+  .stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 20px; }
+  .stat { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 10px; }
+  .stat .val { font-size: 18px; font-weight: 700; color: var(--accent); }
+  .stat .lbl { font-size: 10px; color: var(--muted); margin-top: 2px; }
+  .legend { display: flex; flex-direction: column; gap: 6px; margin-bottom: 20px; }
+  .legend-item { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+  .legend-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+  .top-links { display: flex; flex-direction: column; gap: 4px; }
+  .top-links a { font-size: 11px; color: var(--muted); text-decoration: none; padding: 4px 6px; border-radius: 4px; transition: all 0.15s; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .top-links a:hover { background: var(--bg); color: var(--text); }
+  .node { cursor: pointer; }
+  .node-label { font-size: 10px; fill: var(--text); pointer-events: none; }
+  .link { stroke: #2a2d3a; stroke-opacity: 0.6; fill: none; }
+  .link.active { stroke: var(--accent); stroke-opacity: 1; }
+  .tooltip { position: fixed; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px; font-size: 12px; pointer-events: none; opacity: 0; transition: opacity 0.15s; z-index: 100; max-width: 260px; }
+  .tooltip .t-name { font-weight: 600; margin-bottom: 4px; }
+  .tooltip .t-path { font-size: 10px; color: var(--muted); margin-bottom: 6px; word-break: break-all; }
+  .tooltip .t-meta { display: flex; gap: 12px; font-size: 11px; }
+  .tooltip .t-meta span { color: var(--accent); }
+</style>
+</head>
+<body>
+<header>
+  <h1>🧠 <span>Vault</span> Graphs</h1>
+  <div class="vault-tabs">
+    <button class="vault-tab active" data-vault="hermes">hermes x Akhil</button>
+    <button class="vault-tab" data-vault="secondbrain">second-brain</button>
+    <button class="vault-tab" data-vault="both">Both Combined</button>
+  </div>
+</header>
+<div class="main">
+  <div class="graph-panel" id="graphPanel"><svg id="svg"></svg></div>
+  <div class="sidebar">
+    <h3>Stats</h3>
+    <div class="stat-grid" id="stats"></div>
+    <h3>Legend</h3>
+    <div class="legend" id="legend"></div>
+    <h3>Top Connected</h3>
+    <div class="top-links" id="topLinks"></div>
+  </div>
+</div>
+<div class="tooltip" id="tooltip"></div>
+<script src="https://d3js.org/d3.v7.min.js"></script>
+<script>
+const COLORS = {
+  Context: '#f59e0b', Reference: '#06b6d4', Trading: '#22c55e',
+  Daily: '#a855f7', Content: '#ef4444', Syntheses: '#c4b5fd',
+  Boards: '#ec4899', Project: '#3b82f6', Archive: '#6b7280',
+  Default: '#8b5cf6'
+};
+const VAULT_DATA = {
+  hermes: {
+    stats: { notes: 51, links: 35, folders: 9, tags: 12 },
+    legend: [['Context',COLORS.Context],['Reference',COLORS.Reference],['Trading',COLORS.Trading],['Daily',COLORS.Daily],['Content',COLORS.Content],['Syntheses',COLORS.Syntheses],['Boards',COLORS.Boards]],
+    nodes: [
+      {id:'second-brain/index',folder:'Reference',conns:4},{id:'CLIMATE.md',folder:'Context',conns:3},
+      {id:'CRITICAL_FACTS.md',folder:'Context',conns:3},{id:'context/index.md',folder:'Context',conns:3},
+      {id:'reference/index.md',folder:'Reference',conns:3},{id:'syntheses/agents-hierarchy.md',folder:'Syntheses',conns:3},
+      {id:'daily/2026-05-29.md',folder:'Daily',conns:2},{id:'syntheses/second-brain.md',folder:'Syntheses',conns:2},
+      {id:'brand/manifesto.md',folder:'Reference',conns:2},{id:'context/goals.md',folder:'Context',conns:2},
+      {id:'daily/2026-05-30.md',folder:'Daily',conns:2},{id:'log.md',folder:'Reference',conns:2},
+      {id:'boards/content-calendar.md',folder:'Boards',conns:1},{id:'boards/OKRs.md',folder:'Boards',conns:1},
+      {id:'boards/Projects.md',folder:'Boards',conns:1},{id:'context/brand.md',folder:'Context',conns:1},
+      {id:'context/niches.md',folder:'Context',conns:1},{id:'reference/content-ideas.md',folder:'Reference',conns:1},
+      {id:'reference/tools.md',folder:'Reference',conns:1},{id:'syntheses/h早上.md',folder:'Syntheses',conns:1},
+      {id:'syntheses/truths.md',folder:'Syntheses',conns:1},{id:'syntheses/vault-setup.md',folder:'Syntheses',conns:1}
+    ],
+    links: [
+      {source:'second-brain/index',target:'CRITICAL_FACTS.md'},{source:'second-brain/index',target:'CLIMATE.md'},
+      {source:'CRITICAL_FACTS.md',target:'context/index.md'},{source:'CRITICAL_FACTS.md',target:'reference/index.md'},
+      {source:'CLIMATE.md',target:'context/index.md'},{source:'CLIMATE.md',target:'syntheses/agents-hierarchy.md'},
+      {source:'context/index.md',target:'context/goals.md'},{source:'context/index.md',target:'context/niches.md'},
+      {source:'reference/index.md',target:'brand/manifesto.md'},{source:'reference/index.md',target:'reference/content-ideas.md'},
+      {source:'reference/index.md',target:'reference/tools.md'},{source:'syntheses/agents-hierarchy.md',target:'daily/2026-05-29.md'},
+      {source:'syntheses/second-brain.md',target:'daily/2026-05-29.md'},{source:'syntheses/agents-hierarchy.md',target:'syntheses/second-brain.md'},
+      {source:'brand/manifesto.md',target:'context/brand.md'},{source:'context/goals.md',target:'boards/OKRs.md'},
+      {source:'reference/content-ideas.md',target:'boards/content-calendar.md'},{source:'daily/2026-05-29.md',target:'daily/2026-05-30.md'},
+      {source:'log.md',target:'daily/2026-05-29.md'},{source:'log.md',target:'second-brain/index'},
+      {source:'syntheses/agents-hierarchy.md',target:'syntheses/truths.md'},{source:'syntheses/agents-hierarchy.md',target:'syntheses/vault-setup.md'},
+      {source:'syntheses/vault-setup.md',target:'syntheses/h早上.md'},{source:'context/niches.md',target:'boards/Projects.md'},
+      {source:'brand/manifesto.md',target:'boards/Projects.md'},{source:'daily/2026-05-30.md',target:'log.md'},
+      {source:'reference/tools.md',target:'boards/Projects.md'},{source:'context/brand.md',target:'context/goals.md'},
+      {source:'syntheses/second-brain.md',target:'syntheses/agents-hierarchy.md'},{source:'second-brain/index',target:'syntheses/second-brain.md'},
+      {source:'second-brain/index',target:'syntheses/agents-hierarchy.md'},{source:'second-brain/index',target:'context/index.md'},
+      {source:'second-brain/index',target:'reference/index.md'}
+    ]
+  },
+  secondbrain: {
+    stats: { notes: 409, links: 1694, folders: 38, tags: 94 },
+    legend: [['Context',COLORS.Context],['Reference',COLORS.Reference],['Trading',COLORS.Trading],['Daily',COLORS.Daily],['Content',COLORS.Content],['Syntheses',COLORS.Syntheses],['Boards',COLORS.Boards],['Project',COLORS.Project],['Archive',COLORS.Archive]],
+    nodes: [
+      {id:'index',folder:'Reference',conns:38},{id:'Akhil Pillay',folder:'Reference',conns:36},
+      {id:'second-brain',folder:'Reference',conns:32},{id:'Brand Strategy',folder:'Reference',conns:28},
+      {id:'Agentic Biz',folder:'Project',conns:25},{id:'Trading',folder:'Reference',conns:22},
+      {id:'YouTube',folder:'Content',conns:20},{id:'TikTok',folder:'Content',conns:18},
+      {id:'Knowledge',folder:'Reference',conns:17},{id:'Wix Studio',folder:'Reference',conns:16},
+      {id:'second-brain vault',folder:'Reference',conns:15},{id:'Content',folder:'Reference',conns:14},
+      {id:'Life OS',folder:'Reference',conns:13},{id:'Syntheses',folder:'Syntheses',conns:12},
+      {id:'Daytona',folder:'Reference',conns:11},{id:'GitHub',folder:'Reference',conns:11},
+      {id:'Hermes',folder:'Project',conns:10},{id:'AI',folder:'Reference',conns:10},
+      {id:'Projects',folder:'Reference',conns:10},{id:'Notion',folder:'Reference',conns:9},
+      {id:'Tasks',folder:'Reference',conns:9},{id:'Notes',folder:'Reference',conns:9}
+    ],
+    links: (()=>{
+      const l=[];
+      const hub=['index','Akhil Pillay','second-brain','Brand Strategy','Agentic Biz','Trading','YouTube','TikTok','Knowledge','Wix Studio'];
+      hub.forEach((h,i)=>hub.forEach((t,j)=>{if(i<j)l.push({source:h,target:t});}}));
+      const rest=['Content','Life OS','Syntheses','Daytona','GitHub','Hermes','AI','Projects','Notion','Tasks','Notes'];
+      rest.forEach(r=>hub.forEach(h=>l.push({source:r,target:h})));
+      return l;
+    })()
+  }
+};
+VAULT_DATA.both={
+  stats:{notes:460,links:1729,folders:47,notes_v:'51 + 409',links_v:'35 + 1,694'},
+  legend:VAULT_DATA.secondbrain.legend,
+  nodes:[...VAULT_DATA.hermes.nodes,...VAULT_DATA.secondbrain.nodes],
+  links:[...VAULT_DATA.hermes.links,...VAULT_DATA.secondbrain.links]
+};
+
+let current='hermes';
+const svg=d3.select('#svg'),tooltip=d3.select('#tooltip');
+let simulation,link,node;
+const W=()=>document.getElementById('graphPanel').clientWidth;
+const H=()=>document.getElementById('graphPanel').clientHeight;
+
+function render(vault){
+  const data=VAULT_DATA[vault];
+  d3.select('#stats').html(`<div class="stat"><div class="val">${data.stats.notes_v||data.stats.notes}</div><div class="lbl">Notes</div></div><div class="stat"><div class="val">${data.stats.links_v||data.stats.links}</div><div class="lbl">Links</div></div><div class="stat"><div class="val">${data.stats.folders}</div><div class="lbl">Folders</div></div><div class="stat"><div class="val">${data.stats.tags||0}</div><div class="lbl">Tags</div></div>`);
+  d3.select('#legend').selectAll('*').remove();
+  data.legend.forEach(([name,color])=>{
+    d3.select('#legend').append('div').attr('class','legend-item')
+      .html(`<div class="legend-dot" style="background:${color}"></div><span>${name}</span>`);
+  });
+  d3.select('#topLinks').selectAll('a').data(data.nodes.slice(0,22)).join('a')
+    .attr('href','#').text(d=>`${d.id} (${d.conns})`)
+    .on('click',(e,d)=>{e.preventDefault();focusNode(d.id);});
+  svg.selectAll('*').remove();
+  const g=svg.append('g');
+  svg.call(d3.zoom().scaleExtent([0.1,4]).on('zoom',e=>g.attr('transform',e)));
+  simulation=d3.forceSimulation(data.nodes)
+    .force('link',d3.forceLink(data.links).id(d=>d.id).distance(80))
+    .force('charge',d3.forceManyBody().strength(-300)).force('center',d3.forceCenter(W()/2,H()/2))
+    .force('collision',d3.forceCollide(20));
+  link=g.append('g').selectAll('line').data(data.links).join('line').attr('class','link').attr('stroke-width',1);
+  node=g.append('g').selectAll('circle').data(data.nodes).join('circle')
+    .attr('class','node').attr('r',d=>Math.max(5,Math.min(20,d.conns*2)))
+    .attr('fill',d=>COLORS[d.folder]||COLORS.Default)
+    .attr('opacity',0.85).call(d3.drag()
+      .on('start',(e,d)=>{if(!e.active)simulation.alphaTarget(0.3).restart();d.fx=d.x;d.fy=d.y;})
+      .on('drag',(e,d)=>{d.fx=e.x;d.fy=e.y;})
+      .on('end',(e,d)=>{if(!e.active)simulation.alphaTarget(0);d.fx=null;d.fy=null;}))
+    .on('mousemove',(e,d)=>{tooltip.style('opacity',1).html(`<div class="t-name">${d.id}</div><div class="t-path">${d.folder}</div><div class="t-meta"><span>${d.conns} connections</span></div>`).style('left',(e.clientX+14)+'px').style('top',(e.clientY-10)+'px');
+      link.attr('class',l=>l.source.id===d.id||l.target.id===d.id?'link active':'link');})
+    .on('mouseleave',()=>{tooltip.style('opacity',0);link.attr('class','link');});
+  node.append('title').text(d=>`${d.id}\n${d.conns} connections`);
+  simulation.on('tick',()=>{link.attr('x1',d=>d.source.x).attr('y1',d=>d.source.y).attr('x2',d=>d.target.x).attr('y2',d=>d.target.y);
+    node.attr('cx',d=>d.x).attr('cy',d=>d.y);});
+}
+function focusNode(id){const data=VAULT_DATA[current];const n=data.nodes.find(d=>d.id===id);if(n)node.filter(d=>d.id===id).dispatch('mousemove');}
+document.querySelectorAll('.vault-tab').forEach(btn=>{
+  btn.onclick=()=>{document.querySelector('.vault-tab.active').classList.remove('active');btn.classList.add('active');current=btn.dataset.vault;render(current);};});
+render(current);
+</script>
+</body>
+</html>
